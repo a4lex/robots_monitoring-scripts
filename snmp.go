@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	h "github.com/a4lex/go-helpers"
 	"github.com/gosnmp/gosnmp"
 )
 
@@ -148,7 +149,7 @@ LOOP_THROUGH_VAR:
 				continue LOOP_THROUGH_VAR
 			}
 			if _, err := RRDCreate(fileRRD, rrdTemplate.couterType, rrdTemplate.min, rrdTemplate.max, rrdTemplate.step); err != nil {
-				// l.Printf(h.ERROR, "Can not create rrddb: %s - %s", fileRRD, err)
+				l.Printf(h.ERROR, "Can not create rrddb: %s - %s", fileRRD, err)
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/big"
+	"regexp"
 	"sync"
 	"time"
 
@@ -85,8 +86,10 @@ func grabeDevice(wg *sync.WaitGroup, num int, chanQuery chan string, deviceChann
 	snmpVars := make([]Iface2SNMP, 0)
 	snmpQueries := make([]string, 0)
 
+LOOP_PROCESS_DEVICE:
 	for dev := range deviceChannel {
 
+		regForNext := regexp.MustCompile(`^(.+)\.([0-9]+?)?$`)
 		from, to, oidCount = 0, 0, len(snmpTemplates[dev.devType])
 		snmpQueries = snmpQueries[:0]
 		snmpVars = snmpVars[:0]
@@ -95,7 +98,7 @@ func grabeDevice(wg *sync.WaitGroup, num int, chanQuery chan string, deviceChann
 		snmpInst := GetSnmpCon(dev.ip, dev.snmpVer, dev.community)
 		if err := snmpInst.Connect(); err != nil {
 			l.Printf(h.INFO, "%s: Host %s got connect error: %v", funcName, dev.ip, err)
-			continue
+			continue LOOP_PROCESS_DEVICE
 		}
 		defer snmpInst.Conn.Close()
 
@@ -109,13 +112,13 @@ func grabeDevice(wg *sync.WaitGroup, num int, chanQuery chan string, deviceChann
 
 			var snmpQueries []string
 			for _, template := range snmpTemplates[dev.devType][from:to] {
-				snmpQueries = append(snmpQueries, template.query)
+				snmpQueries = append(snmpQueries, regForNext.ReplaceAllString(template.query, "${1}"))
 				snmpVars = append(snmpVars, Iface2SNMP{ifaceID: dev.id, snmpTemplate: template})
 			}
 
-			if result, err := snmpInst.Get(snmpQueries); err != nil {
+			if result, err := snmpInst.GetNext(snmpQueries); err != nil {
 				l.Printf(h.ERROR, "%s: host %s do not responce on GET request, error: %v", funcName, dev.ip, err)
-				continue
+				continue LOOP_PROCESS_DEVICE
 			} else {
 				for _, pdu := range result.Variables {
 					valRRD := new(big.Float)
@@ -123,6 +126,7 @@ func grabeDevice(wg *sync.WaitGroup, num int, chanQuery chan string, deviceChann
 						l.Printf(h.ERROR, "%s: host %s, error: %s", funcName, dev.ip, err)
 						valRRD = nil
 					}
+					l.Printf(h.DEBUG, "%s: host %s, got: %s - %s", funcName, dev.ip, pdu.Name, fmt.Sprintf("%.0f", valRRD))
 					snmpResp = append(snmpResp, valRRD)
 				}
 			}
@@ -130,6 +134,8 @@ func grabeDevice(wg *sync.WaitGroup, num int, chanQuery chan string, deviceChann
 
 		if err := RRDStoreValues(&snmpResp, &snmpVars); err != nil {
 			l.Printf(h.ERROR, "%s: host %s, error: %s", funcName, dev.ip, err)
+		} else {
+			l.Printf(h.DEBUG, "%s: host %s, success updated %d values", funcName, dev.ip, len(snmpVars))
 		}
 	}
 

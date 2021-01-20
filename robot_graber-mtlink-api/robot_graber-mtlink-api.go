@@ -166,9 +166,9 @@ func grabeMTQueue(wg *sync.WaitGroup, num int, chanQuery chan string, mtChannel 
 			chanQuery <- (sqlCreateMTLink1 + strings.TrimRight(newMtLinks, ", ") + sqlCreateMTLink3)
 		}
 
-		if newMtBoards != "" {
-			chanQuery <- (sqlCreateMtBoard1 + strings.TrimRight(newMtBoards, ", ") + sqlCreateMtBoard3)
-		}
+		// if newMtBoards != "" {
+		// 	chanQuery <- (sqlCreateMtBoard1 + strings.TrimRight(newMtBoards, ", ") + sqlCreateMtBoard3)
+		// }
 
 	}
 
