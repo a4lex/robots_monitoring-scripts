@@ -1,0 +1,1 @@
+/Users/4lex/HaveFun/GoLang/robots_monitoring-scripts/main.go
