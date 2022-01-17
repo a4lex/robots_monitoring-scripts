@@ -1,0 +1,8 @@
+database:
+  host: "tcp(127.0.0.1:3306)"
+  user: "db_user"
+  pass: "db_pass"
+  database: "db_name"
+  dsn: "?allowOldPasswords=true"
+  maxidle: 32
+  maxopen: 32

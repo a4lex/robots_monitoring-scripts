@@ -1,0 +1,9 @@
+github.com/a4lex/go-helpers v0.0.0-20201223144042-5ec94ac80a60 h1:kKLS0PqqrDb+iI9V20pUQ9M+ssAWB2S7yjBf96b17Gg=
+github.com/a4lex/go-helpers v0.0.0-20201223144042-5ec94ac80a60/go.mod h1:FERQTE0qLpYS09AwYPh2t5K1DtP9II0DcVy9a9XJeNI=
+github.com/a4lex/go-telnet v0.0.0-20180329124119-c3b780dc415b h1:sljSWeigMd8kTCWEIR3pW1mgJqopU6avK8s3/Cipuqs=
+github.com/a4lex/go-telnet v0.0.0-20180329124119-c3b780dc415b/go.mod h1:2FuJ37V2hVG8VTWa30KxxccsJ7A5WqeogeamMfQHfdc=
+github.com/go-sql-driver/mysql v1.6.0 h1:BCTh4TKNUYmOmMUcQ3IipzF5prigylS7XXjEkfCHuOE=
+github.com/go-sql-driver/mysql v1.6.0/go.mod h1:DCzpHaOWr8IXmIStZouvnhqoel9Qv2LBy8hT2VhHyBg=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/yaml.v2 v2.4.0 h1:D8xgwECY7CYvx+Y2n4sBz93Jn9JRvxdiyyo8CTfuKaY=
+gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
