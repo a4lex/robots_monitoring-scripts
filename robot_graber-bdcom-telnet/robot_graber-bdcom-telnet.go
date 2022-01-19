@@ -39,6 +39,7 @@ const (
 		`FROM epon WHERE name NOT LIKE 'fake%'AND id>0 AND country = ? AND name = ? LIMIT 1`
 
 	sqlCallUpdateUseroOnu = "CALL update_user_onu(create_or_update_onu(?, ?, ?, ?, ?, ?, ?, ?), ?)"
+	sqlUpdateInactiveOnu  = "UPDATE onu SET state='0', dereg_reason=?, change_state=IF(dereg_reason=?, 0, 1) WHERE eponid=? AND mac=? LIMIT 1"
 
 	// sqlUpdateUserONU = "INSERT INTO onu_user (onuid, userid) VALUE ('$onuid', '$ref->{'id'}') ON DUPLICATE KEY UPDATE onuid='$onuid', changed=NOW()"
 )
@@ -49,7 +50,7 @@ var (
 
 	chanQuery chan h.Query
 
-	reIfEponName, reActiveOnu, reClientFDB, reFormatMAC *regexp.Regexp
+	reIfEponName, reActiveOnu, reInactiveOnu, reClientFDB, reFormatMAC *regexp.Regexp
 )
 
 func init() {
@@ -58,7 +59,8 @@ func init() {
 	//
 
 	reIfEponName = regexp.MustCompile(`(?i)^(EPON\d+\/\d+:\d+)$`)
-	reActiveOnu = regexp.MustCompile(`(?i)(EPON\d+\/\d+:\d+)\s+([a-f\d\.]{14})\s+([\w\-]+)\s+([\w\-]+)\s+(\d+)\s+(\d+)\s+(\d{4}\.\d{2}\.\d{2}\.\d{2}\:\d{2}\:\d{2})\s+(\d{4}\.\d{2}\.\d{2}\.\d{2}\:\d{2}\:\d{2})\s(llid-admin-down|power-off|unknow|wire-down)\s+(\d+\.\d{2}\:\d{2}\:\d{2})`)
+	reActiveOnu = regexp.MustCompile(`(?i)(EPON\d+\/\d+:\d+)\s+([a-f\d\.]{14})\s+([\w\-]+)\s+([\w\-]+)\s+(\d+)\s+(\d+)\s+(\d{4}[\.-]\d{2}[\.-]\d{2}[\.\s]\d{2}\:\d{2}\:\d{2})\s+(\d{4}[\.-]\d{2}[\.-]\d{2}[\.\s]\d{2}\:\d{2}\:\d{2})\s+([\w\-\_]+)\s+(\d+\.\d{2}\:\d{2}\:\d{2})`)
+	reInactiveOnu = regexp.MustCompile(`(?i)(EPON\d+\/\d+:\d+)\s+([a-f\d\.]{14})\s+([\w]+)\s+(\d{4}[\.-]\d{2}[\.-]\d{2}[\.\s]\d{2}\:\d{2}\:\d{2})\s+(\d{4}[\.-]\d{2}[\.-]\d{2}[\.\s]\d{2}\:\d{2}\:\d{2})\s+([\w\-\_]+)\s+(\d+\.\d{2}\:\d{2}\:\d{2})`)
 	// reRXlLevel = regexp.MustCompile(`(?i)(EPON\d+\/\d+:\d+)\s+(\-\d+\.\d+)`)
 	reClientFDB = regexp.MustCompile(`(?i)([a-f0-9]{4}\.[a-f0-9]{4}\.[a-f0-9]{4})`)
 	reFormatMAC = regexp.MustCompile(`(?i)([a-f0-9]{2})([a-f0-9]{2})\.([a-f0-9]{2})([a-f0-9]{2})\.([a-f0-9]{2})([a-f0-9]{2})`)
@@ -227,7 +229,7 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 		l.Printf(h.INFO, fmt.Sprintf("Success auth on %s:23", epon.ip))
 
 		//
-		// Grabe epon iface
+		// Grabe active epon iface
 		//
 
 		if !t.SendLine("show epon active-onu").ReadUntil('#').GetCommandChainState() {
@@ -276,6 +278,25 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 
 				}
 			}
+		}
+
+		//
+		// Grabe inactive epon iface
+		//
+
+		if !t.SendLine("show epon inactive-onu").ReadUntil('#').GetCommandChainState() {
+			l.Printf(h.ERROR, fmt.Sprintf("Can not exec command 'show epon inactive-onu' on %s:23", epon.ip))
+			continue
+		}
+
+		for _, onu := range t.FindAllStringSubmatch(reInactiveOnu) {
+			chanQuery <- h.Query{Query: sqlUpdateInactiveOnu, Args: []interface{}{
+				onu[6], //dereg_reason
+				onu[6], //dereg_reason
+				epon.sqlId,
+				// strings.ToUpper(onu[1]), //ifname
+				strings.ToUpper(reFormatMAC.ReplaceAllString(onu[2], "$1:$2:$3:$4:$5:$6")), //mac
+			}}
 		}
 
 	}
