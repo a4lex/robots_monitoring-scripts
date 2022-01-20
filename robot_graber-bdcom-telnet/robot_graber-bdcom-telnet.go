@@ -38,15 +38,24 @@ const (
 	sqlGetEponByName = `SELECT id, name AS hostname, INET_NTOA(ip) AS ip, snmp_ro AS comunity, 'admin' AS login, 'gunck7iaf' AS password ` +
 		`FROM epon WHERE name NOT LIKE 'fake%'AND id>0 AND country = ? AND name = ? LIMIT 1`
 
-	sqlCallUpdateUseroOnu = "CALL update_user_onu(create_or_update_onu(?, ?, ?, ?, ?, ?, ?, ?), ?)"
-	sqlUpdateInactiveOnu  = "UPDATE onu SET state='0', dereg_reason=?, change_state=IF(dereg_reason=?, 0, 1) WHERE eponid=? AND mac=? LIMIT 1"
+	sqlCallUpdateUseroOnu = `CALL update_user_onu(create_or_update_onu(?, ?, ?, ?, ?, ?, ?, ?), ?)`
+	sqlUpdateInactiveOnu  = `UPDATE onu SET dereg_reason=?, change_state=IF(dereg_reason=?, 0, 1) WHERE eponid=? AND mac=? LIMIT 1`
 
-	// sqlUpdateUserONU = "INSERT INTO onu_user (onuid, userid) VALUE ('$onuid', '$ref->{'id'}') ON DUPLICATE KEY UPDATE onuid='$onuid', changed=NOW()"
+	sqlInsertTaskForSendMail = `CALL ADD_TASK('epon check_pon_line all', 'radius', 'self')`
+	sqlCheckBrokenLine       = `` +
+		`SELECT IF(COUNT(*) > 0, 'TRUE', 'FALSE') AS send_mail FROM (` +
+		`SELECT COUNT(*) AS total_if,  SUM(IF(change_state=1, 1, 0)) AS change_state_if FROM onu GROUP BY eponid, SUBSTRING(name, 1,7)` +
+		`) AS t WHERE (change_state_if*100)/total_if>? AND change_state_if>?`
 )
 
 var (
-	eponName    = flag.String("epon", "", "Epon Name to fetch level")
-	eponCountry = flag.String("country", "", "Epon Country to fetch level")
+	telnetTimeout = flag.Int("telnet-timeout", 30, "Telnet Timeout for waiting responce from device")
+	telnetRetries = flag.Int("telnet-retries", 3, "Telnet Retries connect to device")
+
+	eponName         = flag.String("epon", "", "Epon Name to fetch level")
+	eponCountry      = flag.String("country", "", "Epon Country to fetch level")
+	ifChStatePercent = flag.String("ifchst-per", "25", "Epon Country to fetch level")
+	ifChStateCount   = flag.String("ifchst-count", "5", "Epon Country to fetch level")
 
 	chanQuery chan h.Query
 
@@ -101,6 +110,10 @@ func process() {
 	close(eponChannel)
 	wgEponQueue.Wait()
 
+	if send_mail, ok := mysqli.DBSelectRow(sqlCheckBrokenLine, *ifChStatePercent, *ifChStateCount)["send_mail"]; ok && send_mail == "TRUE" {
+		mysqli.DBQuery(sqlInsertTaskForSendMail)
+	}
+
 	close(chanQuery)
 	wgQueryQueue.Wait()
 }
@@ -120,9 +133,18 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 	var snmpResult *gosnmp.SnmpPacket
 	var eponIfList map[string]map[string]string
 
+	var telnetConnectAttempt int
+
 	for epon := range eponChannel {
 
 		eponIfList = make(map[string]map[string]string)
+
+		// THIS IS LEGACY
+		rrdDbPath := fmt.Sprintf("%s/%s", *dirRRD, epon.sqlId)
+		if _, err := os.Stat(rrdDbPath); os.IsNotExist(err) {
+			os.MkdirAll(rrdDbPath, os.ModePerm)
+			l.Printf(h.INFO, "Create dir for RRD files: %s", rrdDbPath)
+		}
 
 		//
 		// Fetch iface info via SNMP
@@ -193,9 +215,11 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 		// Connect to BDCom
 		//
 
+		telnetConnectAttempt = *telnetRetries
+
 		l.Printf(h.INFO, fmt.Sprintf("Try connect to %s:23", epon.ip))
 
-		t, err := h.TelnetConnecct("tcp", fmt.Sprintf("%s:23", epon.ip), time.Duration(*h.TelnetTimeout)*(time.Second),
+		t, err := h.TelnetConnect("tcp", fmt.Sprintf("%s:23", epon.ip), time.Duration(*telnetTimeout)*(time.Second),
 			func(msg string) { l.Printf(h.INFO, msg) })
 
 		if err != nil {
@@ -210,18 +234,9 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 		// Authorize via telnet
 		//
 
-		t.ResetCommandChainState().
-			Expect("sername: ").
-			SendLine(epon.login).
-			Expect("assword: ").
-			SendLine(epon.password).
-			Expect(">").
-			SendLine("enable").
-			Expect("assword:", "#").
-			SendLine(epon.password).
-			Expect("#")
+		authorize(t, epon.login, epon.password)
 
-		if !t.GetCommandChainState() {
+		if !t.IsConnected() {
 			l.Printf(h.ERROR, fmt.Sprintf("Can not authorize on %s:23", epon.ip))
 			continue
 		}
@@ -232,7 +247,7 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 		// Grabe active epon iface
 		//
 
-		if !t.SendLine("show epon active-onu").ReadUntil('#').GetCommandChainState() {
+		if !t.SendLine("show epon active-onu").ReadUntil('#').IsConnected() {
 			l.Printf(h.ERROR, fmt.Sprintf("Can not exec command 'show epon active-onu' on %s:23", epon.ip))
 			continue
 		}
@@ -244,8 +259,14 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 				eponIfList[ifName]["rrt"] = onu[6]
 				eponIfList[ifName]["dereg_reason"] = onu[9]
 
-				t.ResetCommandChainState().SendLine("show mac address-table dynamic interface %s", ifName).ReadUntil('#')
-				if !t.GetCommandChainState() {
+				if !t.IsConnected() && telnetConnectAttempt > 0 {
+					telnetConnectAttempt--
+					t.Reconnect()
+					authorize(t, epon.login, epon.password)
+					l.Printf(h.INFO, fmt.Sprintf("Try reconnect to %s:23, attempt for reconnect: %d", epon.ip, telnetConnectAttempt))
+				}
+				t.SendLine("show mac address-table dynamic interface %s", ifName).ReadUntil('#')
+				if !t.IsConnected() {
 					l.Printf(h.ERROR, fmt.Sprintf("Can not exec command 'show mac address-table dynamic interface %s' on %s:23", ifName, epon.ip))
 					continue
 				}
@@ -284,7 +305,7 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 		// Grabe inactive epon iface
 		//
 
-		if !t.SendLine("show epon inactive-onu").ReadUntil('#').GetCommandChainState() {
+		if !t.SendLine("show epon inactive-onu").ReadUntil('#').IsConnected() {
 			l.Printf(h.ERROR, fmt.Sprintf("Can not exec command 'show epon inactive-onu' on %s:23", epon.ip))
 			continue
 		}
@@ -294,14 +315,30 @@ func grabeEponQueue(wg *sync.WaitGroup, num int, chanQuery chan h.Query, eponCha
 				onu[6], //dereg_reason
 				onu[6], //dereg_reason
 				epon.sqlId,
-				// strings.ToUpper(onu[1]), //ifname
 				strings.ToUpper(reFormatMAC.ReplaceAllString(onu[2], "$1:$2:$3:$4:$5:$6")), //mac
 			}}
 		}
 
+		t.
+			SendLine("exit").
+			Expect(">").
+			SendLine("exit")
 	}
 
 	l.Printf(h.FUNC, "Stop: %s - %d, diration: %d", funcName, time.Now().Unix(), time.Now().Unix()-start)
+}
+
+func authorize(t *h.MyTelnet, login, password string) {
+	t.
+		Expect("sername: ").
+		SendLine(login).
+		Expect("assword: ").
+		SendLine(password).
+		Expect(">").
+		SendLine("enable").
+		Expect("assword:", "#").
+		SendLine(password).
+		Expect("#")
 }
 
 //
