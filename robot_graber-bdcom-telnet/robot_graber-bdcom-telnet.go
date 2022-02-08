@@ -39,7 +39,7 @@ const (
 		`FROM epon WHERE name NOT LIKE 'fake%'AND id>0 AND country = ? AND name = ? LIMIT 1`
 
 	sqlCallUpdateUseroOnu = `CALL update_user_onu(create_or_update_onu(?, ?, ?, ?, ?, ?, ?, ?), ?)`
-	sqlUpdateInactiveOnu  = `UPDATE onu SET dereg_reason=?, change_state=IF(dereg_reason=?, 0, 1) WHERE eponid=? AND mac=? LIMIT 1`
+	sqlUpdateInactiveOnu  = `UPDATE onu SET change_state=IF(dereg_reason=?, 0, 1), dereg_reason=? WHERE eponid=? AND mac=? LIMIT 1`
 
 	sqlInsertTaskForSendMail = `CALL ADD_TASK('epon check_pon_line all', 'radius', 'self')`
 	sqlCheckBrokenLine       = `` +
